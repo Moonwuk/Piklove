@@ -1,0 +1,1 @@
+import './globals.css'; export const metadata={title:'AI Copilot',description:'Privacy-first Telegram Business reply copilot'}; export default function Layout({children}:{children:React.ReactNode}){return <html lang="ru"><body><main className="mx-auto min-h-screen max-w-md p-4 pb-24">{children}</main></body></html>}
