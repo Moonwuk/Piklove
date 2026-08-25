@@ -1,0 +1,1 @@
+export default function Settings(){return <><h1 className="text-3xl font-bold">Мой стиль</h1><div className="card mt-5 space-y-3"><p>Основной стиль: <b>Natural</b></p><p>Юмор: 5 / 10</p><p>Флирт: 3 / 10</p><p>Длина: Short</p><p>Эмодзи: Low</p></div></>}
