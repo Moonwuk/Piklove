@@ -46,8 +46,13 @@ Set the API key and all three model variables. The adapter uses the official Res
 cd apps/api
 python -m pip install -e '.[dev]'
 ruff check app tests
+ruff format --check app tests
 pytest
 ```
+
+The suite includes deterministic Telegram/LLM fakes and covers Mini App auth,
+privacy-safe logging, cross-tenant conversation denial, webhook idempotency and
+the rule that `AI OFF` messages retain metadata without raw text.
 
 ## Privacy and retention
 Telegram restrictions plus application ACL form two boundaries. AI OFF messages store metadata but no text. Copilot uses summary + allowlisted safe memory + the configured recent-message window. Cleanup nulls raw text after 30 days while retaining deduplication metadata. Users can erase per-conversation AI memory or all account data. Logs accept only identifiers/event metadata, never content.

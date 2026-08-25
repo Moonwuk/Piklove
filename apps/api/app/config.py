@@ -1,5 +1,7 @@
 from functools import lru_cache
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -28,6 +30,7 @@ class Settings(BaseSettings):
     enable_summaries: bool = True
     enable_memory_extraction: bool = False
     enable_edit_before_send: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:

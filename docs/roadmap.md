@@ -50,6 +50,13 @@ documentation. A milestone is not complete when its happy path alone works.
 
 **Target:** one engineering iteration.
 
+**Status:** in progress. The first stabilization increment reformatted the
+backend, removed wildcard imports, enabled stricter lint rules, introduced
+FastAPI dependency-injection seams for Telegram and LLM providers, and added
+deterministic external-service fakes plus initial tenant/privacy integration
+tests. Explicit Alembic operations, repository extraction, lock files and CI
+remain before this milestone can pass its exit criteria.
+
 ### Deliverables
 
 - Reformat the compressed prototype code into maintainable typed modules.
