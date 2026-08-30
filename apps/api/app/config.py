@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -28,6 +29,37 @@ class Settings(BaseSettings):
     enable_summaries: bool = True
     enable_memory_extraction: bool = False
     enable_edit_before_send: bool = True
+
+    @model_validator(mode="after")
+    def validate_production_secrets(self) -> "Settings":
+        """Fail fast instead of starting production with development credentials."""
+        if self.environment.lower() != "production":
+            return self
+
+        missing = [
+            name
+            for name in (
+                "telegram_bot_token",
+                "telegram_webhook_secret",
+                "openai_api_key",
+                "openai_reply_model",
+                "openai_analysis_model",
+                "openai_summary_model",
+                "session_secret",
+            )
+            if not getattr(self, name)
+        ]
+        if missing:
+            raise ValueError(f"production settings are missing: {', '.join(missing)}")
+        if self.session_secret == "development-secret-change-me":
+            raise ValueError("production SESSION_SECRET must not use the development default")
+        if self.telegram_webhook_secret == "dev-secret":
+            raise ValueError("production TELEGRAM_WEBHOOK_SECRET must not use the development default")
+        if not self.cookie_secure:
+            raise ValueError("production COOKIE_SECURE must be enabled")
+        if not self.web_origin.startswith("https://"):
+            raise ValueError("production WEB_ORIGIN must use HTTPS")
+        return self
 
 @lru_cache
 def get_settings() -> Settings:
