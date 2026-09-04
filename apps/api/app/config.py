@@ -1,6 +1,8 @@
 from functools import lru_cache
+
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -18,15 +20,17 @@ class Settings(BaseSettings):
     session_secret: str = "development-secret-change-me"
     web_origin: str = "http://localhost:3000"
     cookie_secure: bool = False
+    cookie_samesite: str = "lax"
     init_data_max_age_seconds: int = 300
     raw_message_retention_days: int = 30
+    retention_sweep_interval_seconds: int = 3600
     message_debounce_seconds: int = 4
     ai_recent_messages_limit: int = 20
     generation_ttl_seconds: int = 900
     free_generations: int = 20
     pro_monthly_generations: int = 1000
     enable_billing: bool = False
-    enable_summaries: bool = True
+    enable_summaries: bool = False
     enable_memory_extraction: bool = False
     enable_edit_before_send: bool = True
 
@@ -54,12 +58,17 @@ class Settings(BaseSettings):
         if self.session_secret == "development-secret-change-me":
             raise ValueError("production SESSION_SECRET must not use the development default")
         if self.telegram_webhook_secret == "dev-secret":
-            raise ValueError("production TELEGRAM_WEBHOOK_SECRET must not use the development default")
+            raise ValueError(
+                "production TELEGRAM_WEBHOOK_SECRET must not use the development default"
+            )
         if not self.cookie_secure:
             raise ValueError("production COOKIE_SECURE must be enabled")
         if not self.web_origin.startswith("https://"):
             raise ValueError("production WEB_ORIGIN must use HTTPS")
+        if self.cookie_samesite.lower() not in ("lax", "strict", "none"):
+            raise ValueError("production COOKIE_SAMESITE must be lax, strict or none")
         return self
+
 
 @lru_cache
 def get_settings() -> Settings:

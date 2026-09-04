@@ -1,3 +1,10 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
 [project]
 name = "piklove-api"
 version = "0.1.0"
@@ -10,5 +17,15 @@ asyncio_mode = "auto"
 pythonpath = ["."]
 [tool.ruff]
 line-length = 100
+
 [tool.ruff.lint]
-ignore = ["E501", "E701", "E702", "F403", "F405"]
+ignore = [
+    "E501",
+    "E701",
+    "E702",
+    "F403",
+    "F405",
+    "B008", # FastAPI Depends(...) in defaults is idiomatic
+    "UP017", # datetime.timezone.utc alias
+    "BLE001", # deliberate broad catches: session parse guard, send-unknown reconciliation
+]
