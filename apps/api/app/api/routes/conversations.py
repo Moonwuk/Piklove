@@ -106,6 +106,10 @@ async def suggestions(
         g = await SuggestionService(OpenAIProvider()).generate(db, user_id, c)
     except ValueError as e:
         raise HTTPException(409, "NO_CONTEXT_MESSAGES") from e
+    except RuntimeError as e:
+        # Missing/unconfigured provider credentials: the client's fault to fix,
+        # not an internal error. Surface a clear operator-facing message.
+        raise HTTPException(503, "AI_PROVIDER_NOT_CONFIGURED") from e
     return {
         "generation_id": g.id,
         "analysis": {

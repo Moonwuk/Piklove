@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../../lib/api';
+import { api, ApiError } from '../../lib/api';
 
 type Style = {
   tone: string;

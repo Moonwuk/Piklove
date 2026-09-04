@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../../lib/api';
+import { api, ApiError } from '../../lib/api';
 
 export default function Privacy() {
   const [busy, setBusy] = useState('');

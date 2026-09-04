@@ -33,6 +33,8 @@ class LLMProvider(Protocol):
 class OpenAIProvider:
     def __init__(self):
         self.s = get_settings()
+        if not self.s.openai_api_key:
+            raise RuntimeError("OPENAI_API_KEY is not configured")
         self.client = AsyncOpenAI(api_key=self.s.openai_api_key)
 
     async def _structured(self, model, prompt, context, schema):
