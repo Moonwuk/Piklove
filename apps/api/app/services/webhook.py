@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import *
@@ -21,23 +22,41 @@ class WebhookService:
             return
 
         event = next((name for name in self.event_names if name in payload), "unknown")
-        if event == "business_connection":
-            await self._connection(db, payload[event])
-        elif event in ("business_message", "edited_business_message"):
-            await self._message(db, payload[event], event == "edited_business_message")
-        elif event == "deleted_business_messages":
-            await self._deleted(db, payload[event])
+        try:
+            if event == "business_connection":
+                await self._connection(db, payload[event])
+            elif event in ("business_message", "edited_business_message"):
+                await self._message(db, payload[event], event == "edited_business_message")
+            elif event == "deleted_business_messages":
+                await self._deleted(db, payload[event])
 
-        if update_id is not None:
-            db.add(ProcessedUpdate(update_id=update_id, event_type=event))
-        await db.commit()
+            if update_id is not None:
+                db.add(ProcessedUpdate(update_id=update_id, event_type=event))
+            await db.commit()
+        except IntegrityError:
+            # A concurrent worker processed the same update (or message) first.
+            # The work is already applied; rolling back and returning ok keeps
+            # Telegram from retrying a duplicate forever.
+            await db.rollback()
+            safe_log_event(event, error_code="DUPLICATE_UPDATE_CONCURRENT")
+            return
         safe_log_event(event)
 
     async def _connection(self, db, data):
         telegram_user_id = data["user"]["id"]
         user = await db.scalar(select(User).where(User.telegram_user_id == telegram_user_id))
         if not user:
-            return
+            # The owner may connect the Business Bot before ever opening the Mini
+            # App. Persist the account now so the connection is claimable at
+            # first login instead of being dropped (onboarding trap).
+            profile = data.get("user") or {}
+            user = User(
+                telegram_user_id=telegram_user_id,
+                telegram_username=profile.get("username"),
+                first_name=profile.get("first_name"),
+            )
+            db.add(user)
+            await db.flush()
 
         row = await db.scalar(
             select(BusinessConnection).where(
@@ -53,6 +72,7 @@ class WebhookService:
                 telegram_user_id=telegram_user_id,
             )
             db.add(row)
+        row.user_id = user.id
         row.is_enabled = enabled
         row.can_reply = enabled and bool(rights.get("can_reply", False))
         row.rights_json = rights
@@ -83,9 +103,7 @@ class WebhookService:
                 business_connection_id=connection.id,
                 telegram_chat_id=chat["id"],
                 telegram_peer_user_id=chat.get("id") if chat.get("type") == "private" else None,
-                display_name=" ".join(
-                    filter(None, [chat.get("first_name"), chat.get("last_name")])
-                )
+                display_name=" ".join(filter(None, [chat.get("first_name"), chat.get("last_name")]))
                 or chat.get("title"),
                 username=chat.get("username"),
                 ai_mode=AIMode.off,

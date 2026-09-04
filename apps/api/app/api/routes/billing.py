@@ -1,19 +1,43 @@
 from typing import Protocol
-from fastapi import APIRouter,Depends,HTTPException
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.api.deps import current_user_id
 from app.config import get_settings
 from app.db.base import Subscription
 from app.db.session import get_db
+from app.services.quota import quota_state
+
+
 class BillingProvider(Protocol):
- async def create_invoice(self,user_id:str)->str: ...
+    async def create_invoice(self, user_id: str) -> str: ...
+
+
 class TelegramStarsProvider:
- async def create_invoice(self,user_id:str)->str: raise NotImplementedError
-router=APIRouter(prefix="/billing")
+    async def create_invoice(self, user_id: str) -> str:
+        raise NotImplementedError
+
+
+router = APIRouter(prefix="/billing")
+
+
 @router.get("/subscription")
-async def subscription(user_id=Depends(current_user_id),db=Depends(get_db)):
- s=await db.scalar(select(Subscription).where(Subscription.user_id==user_id,Subscription.status=="active")); return {"plan":s.plan if s else "free","status":s.status if s else "active"}
+async def subscription(user_id=Depends(current_user_id), db: AsyncSession = Depends(get_db)):
+    s = await db.scalar(
+        select(Subscription).where(Subscription.user_id == user_id, Subscription.status == "active")
+    )
+    return {"plan": s.plan if s else "free", "status": s.status if s else "active"}
+
+
+@router.get("/usage")
+async def usage(user_id=Depends(current_user_id), db: AsyncSession = Depends(get_db)):
+    return await quota_state(db, user_id)
+
+
 @router.post("/subscribe")
 async def subscribe(user_id=Depends(current_user_id)):
- if not get_settings().enable_billing: raise HTTPException(503,"BILLING_DISABLED")
- raise HTTPException(501,"TELEGRAM_STARS_SETUP_REQUIRED")
+    if not get_settings().enable_billing:
+        raise HTTPException(503, "BILLING_DISABLED")
+    raise HTTPException(501, "TELEGRAM_STARS_SETUP_REQUIRED")

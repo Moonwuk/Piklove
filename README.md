@@ -39,6 +39,17 @@ Telegram's secret header is mandatory; obscurity is not authentication.
 ## OpenAI setup
 Set the API key and all three model variables. The adapter uses the official Responses API structured parsing and `store=false` by default. Conversation text is untrusted input; the model has no Telegram, database, HTTP or filesystem tools and no recipient identifiers.
 
+## Quotas
+Generation quotas are enforced before any billable LLM call: `GET /api/v1/billing/usage`
+returns `{plan, used, limit}`; the 21st generation on the free plan returns HTTP 402 with
+`{error: {code: "QUOTA_EXCEEDED", used, limit, plan}}`. Limits come from
+`FREE_GENERATIONS` / `PRO_MONTHLY_GENERATIONS` and reset monthly.
+
+## Retention
+Raw message text is dropped by an in-app background loop every
+`RETENTION_SWEEP_INTERVAL_SECONDS` for messages older than `RAW_MESSAGE_RETENTION_DAYS`.
+This enforces the privacy promise even without an external scheduler.
+
 ## Tests
 ```bash
 cd apps/api
