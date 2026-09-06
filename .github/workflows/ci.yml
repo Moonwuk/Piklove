@@ -8,6 +8,19 @@ on:
 jobs:
   api:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: piklove_test
+          POSTGRES_USER: piklove
+          POSTGRES_PASSWORD: piklove
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U piklove -d piklove_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     defaults:
       run:
         working-directory: apps/api
@@ -24,8 +37,17 @@ jobs:
         run: ruff check .
       - name: Ruff format check
         run: ruff format --check .
+      - name: Migration round-trip
+        run: |
+          alembic upgrade head
+          alembic check
+          alembic downgrade base
+        env:
+          DATABASE_URL: postgresql+asyncpg://piklove:piklove@localhost:5432/piklove_test
       - name: Tests
         run: python -m pytest tests/ -q
+        env:
+          TEST_DATABASE_URL: postgresql+asyncpg://piklove:piklove@localhost:5432/piklove_test
 
   web:
     runs-on: ubuntu-latest
@@ -38,8 +60,11 @@ jobs:
         with:
           node-version: 22
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+      - name: TypeScript
+        run: npm run typecheck
       - name: Build
         run: npm run build
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+          NEXT_TELEMETRY_DISABLED: "1"

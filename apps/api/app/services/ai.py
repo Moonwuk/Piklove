@@ -7,8 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.db.base import Generation, Memory, Message, StyleProfile, UsageEvent
-from app.services.quota import ensure_quota
+from app.db.base import Generation, Memory, Message, StyleProfile
+from app.services.quota import reserve_quota
 from app.services.schemas import (
     AIConversationContext,
     ContextMessage,
@@ -117,8 +117,6 @@ class SuggestionService:
         self.builder = AIContextBuilder()
 
     async def generate(self, db: AsyncSession, user_id: str, conversation):
-        # Reject before any billable LLM call when the monthly quota is spent.
-        await ensure_quota(db, user_id)
         last = await db.scalar(
             select(Message)
             .where(
@@ -132,6 +130,9 @@ class SuggestionService:
         if not last:
             raise ValueError("conversation has no retained messages")
         context = await self.builder.build(db, user_id, conversation)
+        # Reserve atomically immediately before the first potentially billable
+        # provider call. A failed provider call still consumes the reservation.
+        await reserve_quota(db, user_id)
         analysis = await self.provider.analyze_conversation(context)
         suggestions = await self.provider.generate_replies(context, analysis)
         now = datetime.now(timezone.utc)
@@ -146,6 +147,5 @@ class SuggestionService:
             expires_at=now + timedelta(seconds=get_settings().generation_ttl_seconds),
         )
         db.add(g)
-        db.add(UsageEvent(user_id=user_id, type="ai_generation", quantity=1, event_metadata={}))
         await db.commit()
         return g
