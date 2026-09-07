@@ -8,8 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.db.base import Generation, Memory, Message, StyleProfile, UsageEvent
-from app.services.quota import ensure_quota
+from app.db.base import Generation, Memory, Message, StyleProfile
+from app.services.quota import reserve_quota
 from app.services.schemas import (
     AIConversationContext,
     ContextMessage,
@@ -45,8 +45,6 @@ class LLMProvider(Protocol):
 
 class OpenAIProvider:
     #: Settings that must be present before any request is worth attempting.
-    #: An empty model name is a configuration mistake, not an upstream fault —
-    #: catching it here keeps it out of the 502 bucket.
     required_settings = ("openai_api_key", "openai_reply_model", "openai_analysis_model")
 
     def __init__(self):
@@ -56,8 +54,6 @@ class OpenAIProvider:
             raise AIProviderNotConfigured(f"missing OpenAI configuration: {', '.join(missing)}")
         self.client = AsyncOpenAI(
             api_key=self.s.openai_api_key,
-            # Without an explicit budget the SDK waits 600s per call, so a
-            # stalled provider would pin a Mini App request for ten minutes.
             timeout=self.s.openai_timeout_seconds,
             max_retries=self.s.openai_max_retries,
         )
@@ -74,15 +70,12 @@ class OpenAIProvider:
                 text_format=schema,
             )
         except ValidationError as e:
-            # The model answered off-schema (e.g. two reply options instead of
-            # three). ValidationError subclasses ValueError, so left uncaught it
-            # would surface to the client as the unrelated NO_CONTEXT_MESSAGES.
+            # ValidationError subclasses ValueError; keep it distinct from the
+            # missing-context condition handled by the API route.
             raise AIProviderUnavailable("provider returned malformed structured output") from e
         except OpenAIError as e:
-            # Bad model name, rejected key, rate limit, timeout, connection
-            # failure: upstream faults, not defects in this service. Only the
-            # exception type is carried over — provider messages can quote the
-            # request, and conversation text must never reach logs or clients.
+            # Provider messages may quote the request, so only the exception type
+            # is propagated beyond this boundary.
             raise AIProviderUnavailable(type(e).__name__) from e
         if response.output_parsed is None:
             raise AIProviderUnavailable("provider returned no structured output")
@@ -156,8 +149,6 @@ class SuggestionService:
         self.builder = AIContextBuilder()
 
     async def generate(self, db: AsyncSession, user_id: str, conversation):
-        # Reject before any billable LLM call when the monthly quota is spent.
-        await ensure_quota(db, user_id)
         last = await db.scalar(
             select(Message)
             .where(
@@ -171,6 +162,9 @@ class SuggestionService:
         if not last:
             raise NoContextMessages("conversation has no retained messages")
         context = await self.builder.build(db, user_id, conversation)
+        # Reserve atomically immediately before the first potentially billable
+        # provider call. A failed provider call still consumes the reservation.
+        await reserve_quota(db, user_id)
         analysis = await self.provider.analyze_conversation(context)
         suggestions = await self.provider.generate_replies(context, analysis)
         now = datetime.now(timezone.utc)
@@ -185,6 +179,5 @@ class SuggestionService:
             expires_at=now + timedelta(seconds=get_settings().generation_ttl_seconds),
         )
         db.add(g)
-        db.add(UsageEvent(user_id=user_id, type="ai_generation", quantity=1, event_metadata={}))
         await db.commit()
         return g

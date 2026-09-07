@@ -266,6 +266,24 @@ def test_settings_repair_account_created_without_a_profile(client):
     assert r.status_code == 200, r.text
 
 
+def test_account_bootstrap_is_idempotent(client):
+    cookie = _auth(client)
+
+    assert client.get("/api/v1/settings/style", headers={"Cookie": cookie}).status_code == 200
+    assert client.get("/api/v1/settings/style", headers={"Cookie": cookie}).status_code == 200
+
+    import anyio
+    from sqlalchemy import func, select
+
+    from app.db import session as session_module
+    from app.db.base import Subscription
+
+    async def count_subscriptions():
+        async with session_module.SessionLocal() as db:
+            return await db.scalar(select(func.count()).select_from(Subscription))
+
+    assert anyio.run(count_subscriptions) == 1
+
 def test_account_deletion_erases_conversations_and_retained_text(client):
     """Regression: the erasure promise rode entirely on ON DELETE CASCADE.
 
@@ -348,7 +366,7 @@ def test_ai_off_discards_text_and_quota_blocks_after_limit(client):
     assert r.json() == {"plan": "free", "used": 2, "limit": 2}
 
 
-def test_provider_failure_is_a_named_502_and_costs_no_quota(client, monkeypatch):
+def test_provider_failure_is_a_named_502_and_reserves_quota(client, monkeypatch):
     """Regression: any OpenAI fault reached the Mini App as INTERNAL_ERROR."""
     cookie, conv_id = _make_conversation_with_text(client)
 
@@ -364,8 +382,9 @@ def test_provider_failure_is_a_named_502_and_costs_no_quota(client, monkeypatch)
     assert r.status_code == 502
     assert r.json()["error"]["code"] == "AI_PROVIDER_UNAVAILABLE"
 
-    # A generation that never happened must not burn the owner's monthly quota.
-    assert client.get("/api/v1/billing/usage", headers={"Cookie": cookie}).json()["used"] == 0
+    # The reservation happens before the provider call, so upstream cost is bounded
+    # even when the provider fails.
+    assert client.get("/api/v1/billing/usage", headers={"Cookie": cookie}).json()["used"] == 1
 
 
 def test_unconfigured_provider_returns_503(client, monkeypatch):

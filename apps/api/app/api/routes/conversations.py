@@ -114,13 +114,9 @@ async def suggestions(
     except NoContextMessages as e:
         raise HTTPException(409, "NO_CONTEXT_MESSAGES") from e
     except AIProviderNotConfigured as e:
-        # Missing credentials or model names: an operator's fault to fix, not an
-        # internal error and not something a retry can resolve.
         safe_log_event("ai_generation_failed", error_code="AI_PROVIDER_NOT_CONFIGURED")
         raise HTTPException(503, "AI_PROVIDER_NOT_CONFIGURED") from e
     except AIProviderUnavailable as e:
-        # Upstream fault (bad model, rejected key, rate limit, timeout). Named
-        # explicitly so the Mini App stops reporting it as INTERNAL_ERROR.
         safe_log_event("ai_generation_failed", error_code="AI_PROVIDER_UNAVAILABLE")
         raise HTTPException(502, "AI_PROVIDER_UNAVAILABLE") from e
     return {

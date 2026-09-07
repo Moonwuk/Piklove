@@ -10,6 +10,7 @@ _ALLOWED = {
     "event_type",
     "latency",
     "error_code",
+    "cleared",
 }
 
 

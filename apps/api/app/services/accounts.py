@@ -4,24 +4,33 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import StyleProfile, Subscription
 
+DEFAULT_SUBSCRIPTION_PROVIDER = "telegram_stars"
+
 
 async def ensure_account_records(db: AsyncSession, user_id: str) -> StyleProfile | None:
-    """Create the per-user singletons this account is missing, commit, return its profile.
+    """Create the account's default style and subscription records idempotently.
 
-    These cannot be created only where login inserts the User row: the webhook
-    already creates the User when the Business Bot is connected before the owner
-    first opens the Mini App, so login finds an existing row and skips that
-    branch. Accounts onboarded in that order then had no style profile at all
-    and the settings screen answered 500. Calling this on read as well as on
-    login also repairs accounts created before the fix.
+    A Business Bot webhook can create the User before the Mini App login. The
+    account records therefore need to be repaired on login and on settings reads.
+    The unique subscription constraint makes concurrent requests safe.
     """
     if not await db.get(StyleProfile, user_id):
         db.add(StyleProfile(user_id=user_id))
-    if not await db.scalar(select(Subscription).where(Subscription.user_id == user_id)):
-        db.add(Subscription(user_id=user_id))
+    if not await db.scalar(
+        select(Subscription).where(
+            Subscription.user_id == user_id,
+            Subscription.provider == DEFAULT_SUBSCRIPTION_PROVIDER,
+        )
+    ):
+        db.add(
+            Subscription(
+                user_id=user_id,
+                provider=DEFAULT_SUBSCRIPTION_PROVIDER,
+            )
+        )
     try:
         await db.commit()
     except IntegrityError:
-        # A concurrent request inserted the same singletons first; theirs stand.
+        # Another request inserted one of the account singletons first.
         await db.rollback()
     return await db.get(StyleProfile, user_id)

@@ -187,7 +187,10 @@ class Memory(Base, UUIDMixin, TimestampMixin):
 
 class Subscription(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "subscriptions"
-    __table_args__ = (Index("ix_subscription_user_status", "user_id", "status"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", name="uq_subscriptions_user_provider"),
+        Index("ix_subscription_user_status", "user_id", "status"),
+    )
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     provider: Mapped[str] = mapped_column(String, default="telegram_stars")
     plan: Mapped[str] = mapped_column(String, default="free")
