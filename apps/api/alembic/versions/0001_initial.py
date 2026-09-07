@@ -6,6 +6,7 @@ silently changing the meaning of an already published migration.
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0001"

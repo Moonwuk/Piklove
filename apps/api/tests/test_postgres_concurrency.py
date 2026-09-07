@@ -20,8 +20,8 @@ from app.db.base import (
     Conversation,
     Generation,
     SendAttempt,
-    User,
     UsageEvent,
+    User,
 )
 from app.services.quota import reserve_quota
 
