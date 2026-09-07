@@ -18,6 +18,18 @@ s = get_settings()
 logger = logging.getLogger("piklove")
 
 
+def configure_logging():
+    """Configure the service logger without exposing request content."""
+    logger.setLevel(logging.INFO)
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        logger.addHandler(handler)
+
+
+configure_logging()
+
+
 async def _retention_loop(interval_seconds: int):
     """Periodically drop retained message text older than the retention window.
 
