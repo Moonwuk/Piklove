@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from app.api.deps import current_user_id
-from app.db.base import StyleProfile
 from app.db.session import get_db
+from app.services.accounts import ensure_account_records
 
 router = APIRouter(prefix="/settings")
 
@@ -20,12 +20,12 @@ class Style(BaseModel):
 
 @router.get("/style")
 async def get_style(user_id=Depends(current_user_id), db=Depends(get_db)):
-    return Style.model_validate(await db.get(StyleProfile, user_id), from_attributes=True)
+    return Style.model_validate(await ensure_account_records(db, user_id), from_attributes=True)
 
 
 @router.put("/style")
 async def put_style(body: Style, user_id=Depends(current_user_id), db=Depends(get_db)):
-    s = await db.get(StyleProfile, user_id)
+    s = await ensure_account_records(db, user_id)
     for k, v in body.model_dump().items():
         setattr(s, k, v)
     await db.commit()

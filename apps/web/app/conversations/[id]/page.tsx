@@ -53,6 +53,8 @@ export default function Conversation({ params }: { params: Promise<{ id: string 
       if (e instanceof ApiError) {
         if (e.code === 'QUOTA_EXCEEDED') setError('Лимит генераций на месяц исчерпан.');
         else if (e.code === 'NO_CONTEXT_MESSAGES') setError('Нет сохранённых сообщений: включите Copilot и получите новое сообщение в этом чате.');
+        else if (e.code === 'AI_PROVIDER_NOT_CONFIGURED') setError('AI не настроен на сервере: проверьте OPENAI_API_KEY и имена моделей.');
+        else if (e.code === 'AI_PROVIDER_UNAVAILABLE') setError('AI-провайдер сейчас недоступен (таймаут или ошибка запроса). Попробуйте ещё раз.');
         else setError(`Ошибка: ${e.code}`);
       } else setError(String(e));
     } finally {

@@ -18,6 +18,26 @@ s = get_settings()
 logger = logging.getLogger("piklove")
 
 
+def configure_logging() -> None:
+    """Give the service logger somewhere to write.
+
+    safe_log_event emits JSON at INFO on the "piklove" logger, which uvicorn
+    does not configure — so without a handler here every structured event was
+    discarded: retention sweeps, duplicate webhook updates and AI failures alike
+    left no trace to diagnose from. Propagation stays on so pytest's caplog
+    still sees the records.
+    """
+    if logger.handlers:
+        return
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+
+
+configure_logging()
+
+
 async def _retention_loop(interval_seconds: int):
     """Periodically drop retained message text older than the retention window.
 

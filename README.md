@@ -39,6 +39,21 @@ Telegram's secret header is mandatory; obscurity is not authentication.
 ## OpenAI setup
 Set the API key and all three model variables. The adapter uses the official Responses API structured parsing and `store=false` by default. Conversation text is untrusted input; the model has no Telegram, database, HTTP or filesystem tools and no recipient identifiers.
 
+`OPENAI_TIMEOUT_SECONDS` and `OPENAI_MAX_RETRIES` bound every call — the SDK
+default is 600 seconds and two retries, long enough to pin a Mini App request
+for ten minutes. Failures are separated by cause rather than collapsing into
+`INTERNAL_ERROR`:
+
+| Situation | Response |
+| --- | --- |
+| `OPENAI_API_KEY` or a model name is blank | `503 AI_PROVIDER_NOT_CONFIGURED` |
+| Rejected key, unknown model, rate limit, timeout, off-schema answer | `502 AI_PROVIDER_UNAVAILABLE` |
+| Copilot is on but no message text is retained yet | `409 NO_CONTEXT_MESSAGES` |
+
+A failed generation is not billed against the monthly quota. Only the exception
+type is carried into logs and responses, never provider messages, which can
+quote the request.
+
 ## Quotas
 Generation quotas are enforced before any billable LLM call: `GET /api/v1/billing/usage`
 returns `{plan, used, limit}`; the 21st generation on the free plan returns HTTP 402 with
@@ -60,6 +75,13 @@ pytest
 
 ## Privacy and retention
 Telegram restrictions plus application ACL form two boundaries. AI OFF messages store metadata but no text. Copilot uses summary + allowlisted safe memory + the configured recent-message window. Cleanup nulls raw text after 30 days while retaining deduplication metadata. Users can erase per-conversation AI memory or all account data. Logs accept only identifiers/event metadata, never content.
+
+Account erasure is a single `DELETE` on `users` that relies on the schema's
+`ON DELETE CASCADE`. PostgreSQL enforces that natively; SQLite ignores foreign
+keys unless each connection opts in, so `app/db/session.py` sets
+`PRAGMA foreign_keys=ON` for SQLite engines. Without it the endpoint answers
+`204` while leaving conversations and retained text on disk — the test fixtures
+apply the same helper so the erasure test cannot pass vacuously.
 
 ## Known Telegram limitations
 Bot API has no endpoint for all personal chats. Business access, reply capability and available updates are controlled by Telegram and the account's grants. Connecting the bot and provisioning HTTPS remain external setup. Telegram may reject sends after rights/reply-window changes; timeout outcomes are marked unknown rather than blindly retried.

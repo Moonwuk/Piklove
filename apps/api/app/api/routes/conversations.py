@@ -11,7 +11,14 @@ from app.db.base import *
 from app.db.session import get_db
 from app.integrations.telegram.client import TelegramClient
 from app.services.access import AccessService
-from app.services.ai import OpenAIProvider, SuggestionService
+from app.services.ai import (
+    AIProviderNotConfigured,
+    AIProviderUnavailable,
+    NoContextMessages,
+    OpenAIProvider,
+    SuggestionService,
+)
+from app.services.logging import safe_log_event
 from app.services.schemas import ReplySuggestions
 
 router = APIRouter(prefix="/conversations")
@@ -104,12 +111,18 @@ async def suggestions(
     c, _ = await access.require_generation(db, user_id, conversation_id)
     try:
         g = await SuggestionService(OpenAIProvider()).generate(db, user_id, c)
-    except ValueError as e:
+    except NoContextMessages as e:
         raise HTTPException(409, "NO_CONTEXT_MESSAGES") from e
-    except RuntimeError as e:
-        # Missing/unconfigured provider credentials: the client's fault to fix,
-        # not an internal error. Surface a clear operator-facing message.
+    except AIProviderNotConfigured as e:
+        # Missing credentials or model names: an operator's fault to fix, not an
+        # internal error and not something a retry can resolve.
+        safe_log_event("ai_generation_failed", error_code="AI_PROVIDER_NOT_CONFIGURED")
         raise HTTPException(503, "AI_PROVIDER_NOT_CONFIGURED") from e
+    except AIProviderUnavailable as e:
+        # Upstream fault (bad model, rejected key, rate limit, timeout). Named
+        # explicitly so the Mini App stops reporting it as INTERNAL_ERROR.
+        safe_log_event("ai_generation_failed", error_code="AI_PROVIDER_UNAVAILABLE")
+        raise HTTPException(502, "AI_PROVIDER_UNAVAILABLE") from e
     return {
         "generation_id": g.id,
         "analysis": {

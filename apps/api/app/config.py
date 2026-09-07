@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     openai_analysis_model: str = ""
     openai_summary_model: str = ""
     openai_store: bool = False
+    openai_timeout_seconds: float = 30.0
+    openai_max_retries: int = 1
     session_secret: str = "development-secret-change-me"
     web_origin: str = "http://localhost:3000"
     cookie_secure: bool = False
