@@ -40,9 +40,7 @@ jobs:
       - name: Migration round-trip
         run: |
           alembic upgrade head
-          alembic current --verbose
-          alembic heads --verbose
-          alembic check
+          alembic current --check-heads
           alembic downgrade base
         env:
           DATABASE_URL: postgresql+asyncpg://piklove:piklove@localhost:5432/piklove_test
