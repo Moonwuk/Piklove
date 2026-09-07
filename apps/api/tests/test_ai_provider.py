@@ -9,6 +9,8 @@ ValidationError subclasses ValueError.
 
 from types import SimpleNamespace
 
+import anyio
+
 import httpx
 import openai
 import pytest
@@ -18,11 +20,6 @@ from app.services.ai import AIProviderNotConfigured, AIProviderUnavailable, Open
 from app.services.schemas import AIConversationContext, ConversationContext, UserStyleContext
 
 CREDENTIALS = ("OPENAI_API_KEY", "OPENAI_REPLY_MODEL", "OPENAI_ANALYSIS_MODEL")
-
-
-@pytest.fixture
-def anyio_backend():
-    return "asyncio"
 
 
 @pytest.fixture(autouse=True)
@@ -74,7 +71,7 @@ def test_request_budget_is_bounded(provider):
     assert settings.openai_timeout_seconds <= 60
 
 
-async def test_provider_exception_becomes_unavailable(provider):
+def test_provider_exception_becomes_unavailable(provider):
     timeout = openai.APITimeoutError(
         request=httpx.Request("POST", "https://api.openai.com/v1/responses")
     )
@@ -82,35 +79,47 @@ async def test_provider_exception_becomes_unavailable(provider):
     async def parse(**_kwargs):
         raise timeout
 
-    with pytest.raises(AIProviderUnavailable, match="APITimeoutError"):
-        await stub_responses(provider, parse).analyze_conversation(context())
+    async def exercise():
+        with pytest.raises(AIProviderUnavailable, match="APITimeoutError"):
+            await stub_responses(provider, parse).analyze_conversation(context())
+
+    anyio.run(exercise)
 
 
-async def test_provider_exception_carries_no_message_content(provider):
+def test_provider_exception_carries_no_message_content(provider):
     """Provider errors can quote the request; only the type may be propagated."""
     secret = "private conversation text"
 
     async def parse(**_kwargs):
         raise openai.OpenAIError(secret)
 
-    with pytest.raises(AIProviderUnavailable) as caught:
-        await stub_responses(provider, parse).analyze_conversation(context())
-    assert secret not in str(caught.value)
+    async def exercise():
+        with pytest.raises(AIProviderUnavailable) as caught:
+            await stub_responses(provider, parse).analyze_conversation(context())
+        return str(caught.value)
+
+    assert secret not in anyio.run(exercise)
 
 
-async def test_off_schema_output_is_not_reported_as_missing_context(provider):
+def test_off_schema_output_is_not_reported_as_missing_context(provider):
     async def parse(*, text_format, **_kwargs):
         # Mirror the SDK: the model's answer is validated against the requested
         # schema. An empty object satisfies neither of ours.
         return text_format.model_validate({})
 
-    with pytest.raises(AIProviderUnavailable, match="malformed"):
-        await stub_responses(provider, parse).analyze_conversation(context())
+    async def exercise():
+        with pytest.raises(AIProviderUnavailable, match="malformed"):
+            await stub_responses(provider, parse).analyze_conversation(context())
+
+    anyio.run(exercise)
 
 
-async def test_missing_structured_output_is_unavailable(provider):
+def test_missing_structured_output_is_unavailable(provider):
     async def parse(**_kwargs):
         return SimpleNamespace(output_parsed=None)
 
-    with pytest.raises(AIProviderUnavailable, match="no structured output"):
-        await stub_responses(provider, parse).analyze_conversation(context())
+    async def exercise():
+        with pytest.raises(AIProviderUnavailable, match="no structured output"):
+            await stub_responses(provider, parse).analyze_conversation(context())
+
+    anyio.run(exercise)
