@@ -6,6 +6,7 @@ Privacy-first, multi-tenant reply copilot. It receives only official Telegram Bu
 See [architecture](docs/architecture.md) and [threat model](docs/threat-model.md). The API isolates Telegram, LLM and billing adapters. PostgreSQL is authoritative; Redis is reserved for production debounce/rate-limit/locks. There is no userbot, MTProto login, scraping, mass messaging or autopilot.
 
 Delivery priorities and explicit non-goals are tracked in the [roadmap](docs/roadmap.md).
+Development and agent contributions follow the lightweight [development workflow](docs/development-workflow.md).
 
 ## Requirements and local setup
 Docker 24+ and Compose v2, or Python 3.12, PostgreSQL 16, Redis 7 and Node 22.
@@ -40,15 +41,17 @@ Telegram's secret header is mandatory; obscurity is not authentication.
 Set the API key and all three model variables. The adapter uses the official Responses API structured parsing and `store=false` by default. Conversation text is untrusted input; the model has no Telegram, database, HTTP or filesystem tools and no recipient identifiers.
 
 ## Quotas
-Generation quotas are enforced before any billable LLM call: `GET /api/v1/billing/usage`
+Generation quotas are atomically reserved before any billable LLM call: `GET /api/v1/billing/usage`
 returns `{plan, used, limit}`; the 21st generation on the free plan returns HTTP 402 with
 `{error: {code: "QUOTA_EXCEEDED", used, limit, plan}}`. Limits come from
-`FREE_GENERATIONS` / `PRO_MONTHLY_GENERATIONS` and reset monthly.
+`FREE_GENERATIONS` / `PRO_MONTHLY_GENERATIONS` and reset monthly. A reservation counts
+even if the provider later fails because upstream cost may already have been incurred.
 
 ## Retention
 Raw message text is dropped by an in-app background loop every
 `RETENTION_SWEEP_INTERVAL_SECONDS` for messages older than `RAW_MESSAGE_RETENTION_DAYS`.
-This enforces the privacy promise even without an external scheduler.
+This enforces the privacy promise even without an external scheduler. A PostgreSQL
+advisory lock ensures that only one API worker performs a sweep at a time.
 
 ## Tests
 ```bash
@@ -57,12 +60,14 @@ python -m pip install -e '.[dev]'
 ruff check app tests
 pytest
 ```
+PostgreSQL concurrency tests run when `TEST_DATABASE_URL` is set; CI provisions
+an ephemeral PostgreSQL 16 service and also verifies an Alembic upgrade/check/downgrade round-trip.
 
 ## Privacy and retention
-Telegram restrictions plus application ACL form two boundaries. AI OFF messages store metadata but no text. Copilot uses summary + allowlisted safe memory + the configured recent-message window. Cleanup nulls raw text after 30 days while retaining deduplication metadata. Users can erase per-conversation AI memory or all account data. Logs accept only identifiers/event metadata, never content.
+Telegram restrictions plus application ACL form two boundaries. AI OFF messages store metadata but no text. Copilot uses summary + allowlisted safe memory + the configured recent-message window. Cleanup nulls raw text after the configurable `RAW_MESSAGE_RETENTION_DAYS` window while retaining deduplication metadata. Users can erase per-conversation AI memory or all account data. Logs accept only identifiers/event metadata, never content.
 
 ## Known Telegram limitations
 Bot API has no endpoint for all personal chats. Business access, reply capability and available updates are controlled by Telegram and the account's grants. Connecting the bot and provisioning HTTPS remain external setup. Telegram may reject sends after rights/reply-window changes; timeout outcomes are marked unknown rather than blindly retried.
 
 ## Current MVP limitations
-Redis-backed debounce/rate limits, scheduled job runner, complete Telegram Stars invoice/pre-checkout activation, subscription cancellation, summary/memory extraction, CSRF double-submit protection and production metrics exporters are prepared architecturally but not wired end-to-end. Billing stays disabled. The UI supports the core connection/conversation/Copilot/suggestion/confirmed-send path; style/privacy controls need final mutation wiring. No autopilot exists or is feature-flagged.
+Redis-backed debounce/rate limits, a dedicated external job runner, complete Telegram Stars invoice/pre-checkout activation, subscription cancellation, summary/memory extraction, CSRF double-submit protection and production metrics exporters are prepared architecturally but not wired end-to-end. Billing stays disabled. The UI supports the core connection/conversation/Copilot/suggestion/confirmed-send path, including style and privacy mutations. No autopilot exists or is feature-flagged.
