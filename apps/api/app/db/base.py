@@ -70,6 +70,7 @@ class TimestampMixin:
 
 class User(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "users"
+    __table_args__ = (UniqueConstraint("telegram_user_id", name="users_telegram_user_id_key"),)
     telegram_user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     telegram_username: Mapped[str | None] = mapped_column(String)
     first_name: Mapped[str | None] = mapped_column(String)
