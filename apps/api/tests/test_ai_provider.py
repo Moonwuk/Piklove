@@ -10,7 +10,6 @@ ValidationError subclasses ValueError.
 from types import SimpleNamespace
 
 import anyio
-
 import httpx
 import openai
 import pytest
