@@ -40,6 +40,8 @@ jobs:
       - name: Migration round-trip
         run: |
           alembic upgrade head
+          alembic current --verbose
+          alembic heads --verbose
           alembic check
           alembic downgrade base
         env:
