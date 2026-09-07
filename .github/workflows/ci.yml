@@ -40,6 +40,23 @@ jobs:
       - name: Migration round-trip
         run: |
           alembic upgrade head
+          python - <<'PY'
+          import os
+          from alembic.config import Config
+          from alembic.runtime.migration import MigrationContext
+          from alembic.script import ScriptDirectory
+          from sqlalchemy import create_engine
+
+          config = Config("alembic.ini")
+          script = ScriptDirectory.from_config(config)
+          url = os.environ["DATABASE_URL"].replace("+asyncpg", "")
+          engine = create_engine(url)
+          with engine.connect() as connection:
+              current = MigrationContext.configure(connection).get_current_heads()
+          print("SCRIPT_HEADS:", script.get_heads())
+          print("DB_HEADS:", current)
+          print("0002_PARENT:", script.get_revision("0002").down_revision)
+          PY
           alembic current --check-heads
           alembic downgrade base
         env:
