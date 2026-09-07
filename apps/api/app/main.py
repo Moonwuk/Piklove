@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -13,9 +12,22 @@ from sqlalchemy import text
 from app.api.routes import account, auth, billing, conversations, settings, telegram
 from app.config import get_settings
 from app.db import session as db_session_module
+from app.services.logging import safe_log_event
 
 s = get_settings()
 logger = logging.getLogger("piklove")
+
+
+def configure_logging():
+    """Configure the service logger without exposing request content."""
+    logger.setLevel(logging.INFO)
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        logger.addHandler(handler)
+
+
+configure_logging()
 
 
 async def _retention_loop(interval_seconds: int):
@@ -31,9 +43,9 @@ async def _retention_loop(interval_seconds: int):
             async with db_session_module.SessionLocal() as db:
                 cleared = await clear_expired_raw_text(db)
             if cleared:
-                logger.info(json.dumps({"event_type": "retention_sweep", "cleared": cleared}))
-        except Exception:
-            logger.exception("retention sweep failed")
+                safe_log_event("retention_sweep", cleared=cleared)
+        except Exception as exc:
+            safe_log_event("retention_sweep_failed", error_code=type(exc).__name__)
         await asyncio.sleep(interval_seconds)
 
 
@@ -113,7 +125,11 @@ async def validation_errors(request: Request, exc: RequestValidationError):
 
 @app.exception_handler(Exception)
 async def unexpected_errors(request: Request, exc: Exception):
-    logger.exception("unhandled request error", extra={"request_id": request.state.request_id})
+    safe_log_event(
+        "unhandled_request_error",
+        request_id=request.state.request_id,
+        error_code=type(exc).__name__,
+    )
     return error_response(request, 500, "INTERNAL_ERROR", "Internal server error")
 
 
@@ -139,6 +155,6 @@ async def ready():
         async with db_session_module.SessionLocal() as db:
             await db.execute(text("SELECT 1"))
         return {"status": "ready"}
-    except Exception:
-        logger.exception("readiness database check failed")
+    except Exception as exc:
+        safe_log_event("readiness_database_failed", error_code=type(exc).__name__)
         return JSONResponse({"status": "not_ready"}, status_code=503)

@@ -40,6 +40,8 @@ Telegram's secret header is mandatory; obscurity is not authentication.
 ## OpenAI setup
 Set the API key and all three model variables. The adapter uses the official Responses API structured parsing and `store=false` by default. Conversation text is untrusted input; the model has no Telegram, database, HTTP or filesystem tools and no recipient identifiers.
 
+`OPENAI_TIMEOUT_SECONDS` and `OPENAI_MAX_RETRIES` bound every provider call. Missing credentials or model names return `503 AI_PROVIDER_NOT_CONFIGURED`; upstream failures, timeouts and malformed structured output return `502 AI_PROVIDER_UNAVAILABLE`. Provider error details are never returned to the client.
+
 ## Quotas
 Generation quotas are atomically reserved before any billable LLM call: `GET /api/v1/billing/usage`
 returns `{plan, used, limit}`; the 21st generation on the free plan returns HTTP 402 with
@@ -65,6 +67,7 @@ an ephemeral PostgreSQL 16 service and also verifies an Alembic upgrade/check/do
 
 ## Privacy and retention
 Telegram restrictions plus application ACL form two boundaries. AI OFF messages store metadata but no text. Copilot uses summary + allowlisted safe memory + the configured recent-message window. Cleanup nulls raw text after the configurable `RAW_MESSAGE_RETENTION_DAYS` window while retaining deduplication metadata. Users can erase per-conversation AI memory or all account data. Logs accept only identifiers/event metadata, never content.
+SQLite enables foreign-key enforcement on every connection so account erasure exercises the same `ON DELETE CASCADE` guarantee as PostgreSQL.
 
 ## Known Telegram limitations
 Bot API has no endpoint for all personal chats. Business access, reply capability and available updates are controlled by Telegram and the account's grants. Connecting the bot and provisioning HTTPS remain external setup. Telegram may reject sends after rights/reply-window changes; timeout outcomes are marked unknown rather than blindly retried.

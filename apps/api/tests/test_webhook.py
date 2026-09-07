@@ -13,6 +13,7 @@ from app.db.base import (
     ProcessedUpdate,
     User,
 )
+from app.db.session import enforce_sqlite_foreign_keys
 from app.services.webhook import WebhookService
 
 pytestmark = pytest.mark.anyio
@@ -26,6 +27,7 @@ def anyio_backend():
 @pytest.fixture
 async def db():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    enforce_sqlite_foreign_keys(engine)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     session = async_sessionmaker(engine, expire_on_commit=False)()

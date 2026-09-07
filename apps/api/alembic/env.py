@@ -20,7 +20,8 @@ def offline():
         target_metadata=target_metadata,
         literal_binds=True,
     )
-    context.run_migrations()
+    with context.begin_transaction():
+        context.run_migrations()
 
 
 def online():
@@ -28,7 +29,8 @@ def online():
         config.get_section(config.config_ini_section), prefix="sqlalchemy.", poolclass=pool.NullPool
     ).connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
-        context.run_migrations()
+        with context.begin_transaction():
+            context.run_migrations()
 
 
 offline() if context.is_offline_mode() else online()

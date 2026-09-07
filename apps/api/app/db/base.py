@@ -70,6 +70,7 @@ class TimestampMixin:
 
 class User(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "users"
+    __table_args__ = (UniqueConstraint("telegram_user_id", name="users_telegram_user_id_key"),)
     telegram_user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     telegram_username: Mapped[str | None] = mapped_column(String)
     first_name: Mapped[str | None] = mapped_column(String)
@@ -80,7 +81,7 @@ class User(Base, UUIDMixin, TimestampMixin):
 class BusinessConnection(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "telegram_business_connections"
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    telegram_business_connection_id: Mapped[str] = mapped_column(String, unique=True, index=True)
+    telegram_business_connection_id: Mapped[str] = mapped_column(String, unique=True)
     telegram_user_id: Mapped[int] = mapped_column(BigInteger)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     can_reply: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -187,7 +188,10 @@ class Memory(Base, UUIDMixin, TimestampMixin):
 
 class Subscription(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "subscriptions"
-    __table_args__ = (Index("ix_subscription_user_status", "user_id", "status"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", name="uq_subscriptions_user_provider"),
+        Index("ix_subscription_user_status", "user_id", "status"),
+    )
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     provider: Mapped[str] = mapped_column(String, default="telegram_stars")
     plan: Mapped[str] = mapped_column(String, default="free")

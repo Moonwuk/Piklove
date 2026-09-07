@@ -6,6 +6,7 @@ silently changing the meaning of an already published migration.
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0001"
@@ -60,12 +61,6 @@ def upgrade():
         *_timestamps(),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.UniqueConstraint("telegram_business_connection_id"),
-    )
-    op.create_index(
-        "ix_telegram_business_connections_telegram_business_connection_id",
-        "telegram_business_connections",
-        ["telegram_business_connection_id"],
-        unique=True,
     )
     op.create_index(
         "ix_telegram_business_connections_user_id",

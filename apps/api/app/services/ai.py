@@ -2,7 +2,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Protocol
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, OpenAIError
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +21,18 @@ from app.services.schemas import (
 )
 
 
+class NoContextMessages(ValueError):
+    """The conversation retains no message text to build a suggestion from."""
+
+
+class AIProviderNotConfigured(RuntimeError):
+    """Provider credentials or model names are missing from the environment."""
+
+
+class AIProviderUnavailable(RuntimeError):
+    """The provider call failed, timed out, or returned output we cannot use."""
+
+
 class LLMProvider(Protocol):
     async def analyze_conversation(
         self, context: AIConversationContext
@@ -31,22 +44,41 @@ class LLMProvider(Protocol):
 
 
 class OpenAIProvider:
+    #: Settings that must be present before any request is worth attempting.
+    required_settings = ("openai_api_key", "openai_reply_model", "openai_analysis_model")
+
     def __init__(self):
         self.s = get_settings()
-        if not self.s.openai_api_key:
-            raise RuntimeError("OPENAI_API_KEY is not configured")
-        self.client = AsyncOpenAI(api_key=self.s.openai_api_key)
+        missing = [name for name in self.required_settings if not getattr(self.s, name)]
+        if missing:
+            raise AIProviderNotConfigured(f"missing OpenAI configuration: {', '.join(missing)}")
+        self.client = AsyncOpenAI(
+            api_key=self.s.openai_api_key,
+            timeout=self.s.openai_timeout_seconds,
+            max_retries=self.s.openai_max_retries,
+        )
 
     async def _structured(self, model, prompt, context, schema):
-        response = await self.client.responses.parse(
-            model=model,
-            store=self.s.openai_store,
-            input=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": context.model_dump_json()},
-            ],
-            text_format=schema,
-        )
+        try:
+            response = await self.client.responses.parse(
+                model=model,
+                store=self.s.openai_store,
+                input=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": context.model_dump_json()},
+                ],
+                text_format=schema,
+            )
+        except ValidationError as e:
+            # ValidationError subclasses ValueError; keep it distinct from the
+            # missing-context condition handled by the API route.
+            raise AIProviderUnavailable("provider returned malformed structured output") from e
+        except OpenAIError as e:
+            # Provider messages may quote the request, so only the exception type
+            # is propagated beyond this boundary.
+            raise AIProviderUnavailable(type(e).__name__) from e
+        if response.output_parsed is None:
+            raise AIProviderUnavailable("provider returned no structured output")
         return response.output_parsed
 
     async def analyze_conversation(self, context):
@@ -128,7 +160,7 @@ class SuggestionService:
             .limit(1)
         )
         if not last:
-            raise ValueError("conversation has no retained messages")
+            raise NoContextMessages("conversation has no retained messages")
         context = await self.builder.build(db, user_id, conversation)
         # Reserve atomically immediately before the first potentially billable
         # provider call. A failed provider call still consumes the reservation.

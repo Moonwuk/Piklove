@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.db.base import Base
+from app.db.session import enforce_sqlite_foreign_keys
 from app.main import app
 
 TG_TOKEN = "test-bot-token"
@@ -110,6 +111,9 @@ def client(monkeypatch):
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+    # Match production constraint behaviour: without this SQLite ignores every
+    # ON DELETE CASCADE and the account-erasure tests would pass vacuously.
+    enforce_sqlite_foreign_keys(engine)
     maker = async_sessionmaker(engine, expire_on_commit=False)
 
     async def override_get_db():
@@ -207,6 +211,135 @@ def test_connection_update_before_first_login_creates_user(client):
     assert r.status_code == 200
 
 
+def test_connection_before_first_login_still_bootstraps_style_profile(client):
+    """Regression: webhook-first onboarding left the account with no StyleProfile.
+
+    Login only created the per-user singletons when it inserted the User row,
+    but the business_connection webhook had already inserted it, so the settings
+    screen answered 500 for exactly the onboarding order the product supports.
+    """
+    _webhook(client, connection_update())
+    cookie = _auth(client, tg_id=100)
+
+    r = client.get("/api/v1/settings/style", headers={"Cookie": cookie})
+    assert r.status_code == 200, r.text
+    assert r.json()["tone"] == "natural"
+
+    style = {
+        "tone": "playful",
+        "humor_level": 7,
+        "flirt_level": 4,
+        "message_length": "short",
+        "emoji_level": "low",
+        "directness": 5,
+        "custom_instructions": None,
+    }
+    r = client.put("/api/v1/settings/style", json=style, headers={"Cookie": cookie})
+    assert r.status_code == 200, r.text
+    assert client.get("/api/v1/settings/style", headers={"Cookie": cookie}).json() == style
+
+    # The subscription singleton must exist too, or plan resolution silently
+    # falls through to the free default for a paying account.
+    r = client.get("/api/v1/billing/subscription", headers={"Cookie": cookie})
+    assert r.status_code == 200
+    assert r.json() == {"plan": "free", "status": "active"}
+
+
+def test_settings_repair_account_created_without_a_profile(client):
+    """Accounts onboarded by the previous build have no profile row at all."""
+    cookie = _auth(client)
+
+    import anyio
+    from sqlalchemy import delete
+
+    from app.db import session as session_module
+    from app.db.base import StyleProfile
+
+    async def drop_profile():
+        async with session_module.SessionLocal() as db:
+            await db.execute(delete(StyleProfile))
+            await db.commit()
+
+    anyio.run(drop_profile)
+
+    r = client.get("/api/v1/settings/style", headers={"Cookie": cookie})
+    assert r.status_code == 200, r.text
+
+
+def test_account_bootstrap_is_idempotent(client):
+    cookie = _auth(client)
+
+    assert client.get("/api/v1/settings/style", headers={"Cookie": cookie}).status_code == 200
+    assert client.get("/api/v1/settings/style", headers={"Cookie": cookie}).status_code == 200
+
+    import anyio
+    from sqlalchemy import func, select
+
+    from app.db import session as session_module
+    from app.db.base import Subscription
+
+    async def count_subscriptions():
+        async with session_module.SessionLocal() as db:
+            return await db.scalar(select(func.count()).select_from(Subscription))
+
+    assert anyio.run(count_subscriptions) == 1
+
+
+def test_account_deletion_erases_conversations_and_retained_text(client):
+    """Regression: the erasure promise rode entirely on ON DELETE CASCADE.
+
+    SQLite ignores foreign keys unless the connection opts in, so DELETE
+    /account/data answered 204 while leaving conversations and retained message
+    text on disk. Nothing asserted the rows were gone, so no test caught it.
+    """
+    cookie, conv_id = _make_conversation_with_text(client)
+    assert (
+        client.post(
+            f"/api/v1/conversations/{conv_id}/suggestions", headers={"Cookie": cookie}
+        ).status_code
+        == 200
+    )
+
+    import anyio
+    from sqlalchemy import func, select
+
+    from app.db import session as session_module
+    from app.db.base import (
+        BusinessConnection,
+        Conversation,
+        Generation,
+        Message,
+        StyleProfile,
+        Subscription,
+        UsageEvent,
+        User,
+    )
+
+    async def row_counts():
+        async with session_module.SessionLocal() as db:
+            return {
+                model.__name__: await db.scalar(select(func.count()).select_from(model))
+                for model in (
+                    User,
+                    BusinessConnection,
+                    Conversation,
+                    Message,
+                    Generation,
+                    StyleProfile,
+                    Subscription,
+                    UsageEvent,
+                )
+            }
+
+    before = anyio.run(row_counts)
+    assert before["Message"] > 0 and before["Generation"] > 0
+
+    assert client.delete("/api/v1/account/data", headers={"Cookie": cookie}).status_code == 204
+
+    after = anyio.run(row_counts)
+    assert after == dict.fromkeys(before, 0), f"rows survived account erasure: {after}"
+
+
 def test_ai_off_discards_text_and_quota_blocks_after_limit(client):
     cookie, conv_id = _make_conversation_with_text(client)
 
@@ -232,6 +365,45 @@ def test_ai_off_discards_text_and_quota_blocks_after_limit(client):
     # Usage endpoint reflects the burn-down.
     r = client.get("/api/v1/billing/usage", headers={"Cookie": cookie})
     assert r.json() == {"plan": "free", "used": 2, "limit": 2}
+
+
+def test_provider_failure_is_a_named_502_and_reserves_quota(client, monkeypatch):
+    """Regression: any OpenAI fault reached the Mini App as INTERNAL_ERROR."""
+    cookie, conv_id = _make_conversation_with_text(client)
+
+    class BrokenProvider(FakeProvider):
+        async def analyze_conversation(self, ctx):
+            from app.services.ai import AIProviderUnavailable
+
+            raise AIProviderUnavailable("APITimeoutError")
+
+    monkeypatch.setattr("app.api.routes.conversations.OpenAIProvider", lambda: BrokenProvider())
+
+    r = client.post(f"/api/v1/conversations/{conv_id}/suggestions", headers={"Cookie": cookie})
+    assert r.status_code == 502
+    assert r.json()["error"]["code"] == "AI_PROVIDER_UNAVAILABLE"
+
+    # The reservation happens before the provider call, so upstream cost is bounded
+    # even when the provider fails.
+    assert client.get("/api/v1/billing/usage", headers={"Cookie": cookie}).json()["used"] == 1
+
+
+def test_unconfigured_provider_returns_503(client, monkeypatch):
+    """A blank OPENAI_API_KEY or model name is an operator error, not a 500."""
+    cookie, conv_id = _make_conversation_with_text(client)
+
+    from app.services.ai import OpenAIProvider
+
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+    monkeypatch.setattr("app.api.routes.conversations.OpenAIProvider", OpenAIProvider)
+
+    import app.config as config_module
+
+    config_module.get_settings.cache_clear()
+
+    r = client.post(f"/api/v1/conversations/{conv_id}/suggestions", headers={"Cookie": cookie})
+    assert r.status_code == 503
+    assert r.json()["error"]["code"] == "AI_PROVIDER_NOT_CONFIGURED"
 
 
 def test_send_one_time_only_and_duplicate_idempotency_key(client):
