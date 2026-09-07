@@ -63,12 +63,6 @@ def upgrade():
         sa.UniqueConstraint("telegram_business_connection_id"),
     )
     op.create_index(
-        "ix_telegram_business_connections_telegram_business_connection_id",
-        "telegram_business_connections",
-        ["telegram_business_connection_id"],
-        unique=True,
-    )
-    op.create_index(
         "ix_telegram_business_connections_user_id",
         "telegram_business_connections",
         ["user_id"],

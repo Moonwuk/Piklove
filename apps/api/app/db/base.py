@@ -80,7 +80,7 @@ class User(Base, UUIDMixin, TimestampMixin):
 class BusinessConnection(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "telegram_business_connections"
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    telegram_business_connection_id: Mapped[str] = mapped_column(String, unique=True, index=True)
+    telegram_business_connection_id: Mapped[str] = mapped_column(String, unique=True)
     telegram_user_id: Mapped[int] = mapped_column(BigInteger)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     can_reply: Mapped[bool] = mapped_column(Boolean, default=False)
