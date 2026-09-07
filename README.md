@@ -6,6 +6,7 @@ Privacy-first, multi-tenant reply copilot. It receives only official Telegram Bu
 See [architecture](docs/architecture.md) and [threat model](docs/threat-model.md). The API isolates Telegram, LLM and billing adapters. PostgreSQL is authoritative; Redis is reserved for production debounce/rate-limit/locks. There is no userbot, MTProto login, scraping, mass messaging or autopilot.
 
 Delivery priorities and explicit non-goals are tracked in the [roadmap](docs/roadmap.md).
+Development and agent contributions follow the lightweight [development workflow](docs/development-workflow.md).
 
 ## Requirements and local setup
 Docker 24+ and Compose v2, or Python 3.12, PostgreSQL 16, Redis 7 and Node 22.
