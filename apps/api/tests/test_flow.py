@@ -284,6 +284,7 @@ def test_account_bootstrap_is_idempotent(client):
 
     assert anyio.run(count_subscriptions) == 1
 
+
 def test_account_deletion_erases_conversations_and_retained_text(client):
     """Regression: the erasure promise rode entirely on ON DELETE CASCADE.
 
