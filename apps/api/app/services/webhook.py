@@ -18,29 +18,35 @@ class WebhookService:
 
     async def process(self, db: AsyncSession, payload: dict):
         update_id = payload.get("update_id")
-        if update_id is not None and await db.get(ProcessedUpdate, update_id):
-            return
-
         event = next((name for name in self.event_names if name in payload), "unknown")
-        try:
-            if event == "business_connection":
-                await self._connection(db, payload[event])
-            elif event in ("business_message", "edited_business_message"):
-                await self._message(db, payload[event], event == "edited_business_message")
-            elif event == "deleted_business_messages":
-                await self._deleted(db, payload[event])
 
-            if update_id is not None:
-                db.add(ProcessedUpdate(update_id=update_id, event_type=event))
-            await db.commit()
-        except IntegrityError:
-            # A concurrent worker processed the same update (or message) first.
-            # The work is already applied; rolling back and returning ok keeps
-            # Telegram from retrying a duplicate forever.
-            await db.rollback()
-            safe_log_event(event, error_code="DUPLICATE_UPDATE_CONCURRENT")
+        # A first-time Business connection can race the owner's first Mini App
+        # login. Retry once after a unique-constraint conflict so the webhook is
+        # not acknowledged while its connection data was rolled back.
+        for attempt in range(2):
+            if update_id is not None and await db.get(ProcessedUpdate, update_id):
+                return
+            try:
+                if event == "business_connection":
+                    await self._connection(db, payload[event])
+                elif event in ("business_message", "edited_business_message"):
+                    await self._message(db, payload[event], event == "edited_business_message")
+                elif event == "deleted_business_messages":
+                    await self._deleted(db, payload[event])
+
+                if update_id is not None:
+                    db.add(ProcessedUpdate(update_id=update_id, event_type=event))
+                await db.commit()
+            except IntegrityError:
+                await db.rollback()
+                if update_id is not None and await db.get(ProcessedUpdate, update_id):
+                    return
+                if attempt == 0:
+                    continue
+                safe_log_event(event, error_code="INTEGRITY_CONFLICT")
+                raise
+            safe_log_event(event)
             return
-        safe_log_event(event)
 
     async def _connection(self, db, data):
         telegram_user_id = data["user"]["id"]
