@@ -1,13 +1,16 @@
+import asyncio
+from collections import defaultdict
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db.base import Subscription, UsageEvent
 
 PRO_PLAN = "pro"
+_sqlite_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 
 def _month_start(now: datetime) -> datetime:
@@ -44,17 +47,51 @@ async def quota_state(db: AsyncSession, user_id: str) -> dict:
     return {"plan": plan, "used": used, "limit": limit}
 
 
-async def ensure_quota(db: AsyncSession, user_id: str) -> dict:
-    """Raise 402 before any billable LLM call when the monthly quota is spent."""
+def _quota_exceeded(state: dict) -> HTTPException:
+    return HTTPException(
+        402,
+        {
+            "code": "QUOTA_EXCEEDED",
+            "used": state["used"],
+            "limit": state["limit"],
+            "plan": state["plan"],
+        },
+    )
+
+
+async def _reserve_locked(db: AsyncSession, user_id: str) -> dict:
     state = await quota_state(db, user_id)
     if state["used"] >= state["limit"]:
-        raise HTTPException(
-            402,
-            {
-                "code": "QUOTA_EXCEEDED",
-                "used": state["used"],
-                "limit": state["limit"],
-                "plan": state["plan"],
-            },
+        raise _quota_exceeded(state)
+    db.add(
+        UsageEvent(
+            user_id=user_id,
+            type="ai_generation",
+            quantity=1,
+            event_metadata={"status": "reserved"},
         )
-    return state
+    )
+    await db.commit()
+    return {**state, "used": state["used"] + 1}
+
+
+async def reserve_quota(db: AsyncSession, user_id: str) -> dict:
+    """Atomically reserve one generation before invoking the paid provider.
+
+    PostgreSQL serializes reservations for a user with a transaction-scoped
+    advisory lock. SQLite is supported for local development and tests with an
+    equivalent in-process lock; it is not a production deployment target.
+
+    A reservation is intentionally charged even if a later provider call fails:
+    the upstream request may already have incurred cost, so automatically
+    refunding it would allow retries to bypass the configured spend ceiling.
+    """
+    if db.bind and db.bind.dialect.name == "postgresql":
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:user_id, 0))"),
+            {"user_id": user_id},
+        )
+        return await _reserve_locked(db, user_id)
+
+    async with _sqlite_locks[user_id]:
+        return await _reserve_locked(db, user_id)

@@ -1,10 +1,12 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ConversationAnalysis(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     stage: Literal["opening", "rapport", "flirting", "meeting_discussion", "inactive", "boundary"]
     engagement: Literal["low", "medium", "high", "unknown"]
     tone: Literal["neutral", "warm", "playful", "flirty", "serious", "negative"]
@@ -25,12 +27,16 @@ class ConversationAnalysis(BaseModel):
 
 
 class ReplyOption(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     tone: Literal["natural", "playful", "direct"]
     text: str = Field(min_length=1, max_length=4096)
 
 
 class ReplySuggestions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     options: list[ReplyOption]
 
     @field_validator("options")

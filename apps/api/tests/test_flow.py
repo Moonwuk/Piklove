@@ -68,6 +68,12 @@ class FakeTelegram:
 
 
 class FakeProvider:
+    provider_name = "fake"
+    reply_model = "fake-reply"
+
+    async def aclose(self):
+        pass
+
     async def analyze_conversation(self, ctx):
         from app.services.schemas import ConversationAnalysis
 
@@ -145,7 +151,7 @@ def client(monkeypatch):
     import app.config as config_module
 
     monkeypatch.setattr("app.api.routes.conversations.TelegramClient", lambda: FakeTelegram())
-    monkeypatch.setattr("app.api.routes.conversations.OpenAIProvider", lambda: FakeProvider())
+    monkeypatch.setattr("app.api.routes.conversations.create_llm_provider", lambda: FakeProvider())
 
     config_module.get_settings.cache_clear()
     with TestClient(app) as c:
@@ -206,6 +212,21 @@ def test_connection_update_before_first_login_creates_user(client):
     r = client.get("/api/v1/conversations", headers={"Cookie": cookie})
     assert r.status_code == 200
 
+    # Webhook-created users receive the same defaults as login-created users.
+    r = client.get("/api/v1/settings/style", headers={"Cookie": cookie})
+    assert r.status_code == 200
+    style = r.json()
+    assert style["tone"] == "natural"
+
+    style["tone"] = "warm"
+    r = client.put("/api/v1/settings/style", json=style, headers={"Cookie": cookie})
+    assert r.status_code == 200
+    assert r.json()["tone"] == "warm"
+
+    r = client.get("/api/v1/billing/subscription", headers={"Cookie": cookie})
+    assert r.status_code == 200
+    assert r.json() == {"plan": "free", "status": "active"}
+
 
 def test_ai_off_discards_text_and_quota_blocks_after_limit(client):
     cookie, conv_id = _make_conversation_with_text(client)
@@ -232,6 +253,25 @@ def test_ai_off_discards_text_and_quota_blocks_after_limit(client):
     # Usage endpoint reflects the burn-down.
     r = client.get("/api/v1/billing/usage", headers={"Cookie": cookie})
     assert r.json() == {"plan": "free", "used": 2, "limit": 2}
+
+
+def test_provider_timeout_returns_stable_content_free_error(client, monkeypatch):
+    from app.integrations.llm.errors import LLMTimeout
+
+    class TimeoutProvider(FakeProvider):
+        async def analyze_conversation(self, ctx):
+            raise LLMTimeout
+
+    cookie, conv_id = _make_conversation_with_text(client)
+    monkeypatch.setattr(
+        "app.api.routes.conversations.create_llm_provider", lambda: TimeoutProvider()
+    )
+
+    r = client.post(f"/api/v1/conversations/{conv_id}/suggestions", headers={"Cookie": cookie})
+
+    assert r.status_code == 504
+    assert r.json()["error"]["code"] == "AI_PROVIDER_TIMEOUT"
+    assert "please reply to me" not in r.text
 
 
 def test_send_one_time_only_and_duplicate_idempotency_key(client):

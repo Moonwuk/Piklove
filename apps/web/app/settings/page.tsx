@@ -24,8 +24,9 @@ const DEFAULTS: Style = {
 
 export default function Settings() {
   const [style, setStyle] = useState<Style>(DEFAULTS);
-  const [status, setStatus] = useState<'loading' | 'saving' | 'saved' | 'error'>('loading');
-  const [error, setError] = useState('');
+  const [status, setStatus] = useState<'loading' | 'saving' | 'saved'>('loading');
+  const [loadError, setLoadError] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   useEffect(() => {
     api<Style>('/settings/style')
@@ -33,7 +34,7 @@ export default function Settings() {
         setStyle({ ...DEFAULTS, ...s });
         setStatus('saved');
       })
-      .catch(() => setStatus('error'));
+      .catch(() => setLoadError(true));
   }, []);
 
   const update = useCallback(
@@ -41,26 +42,27 @@ export default function Settings() {
       const next = { ...style, ...patch };
       setStyle(next);
       setStatus('saving');
+      setSaveError('');
       try {
         setStyle(await api<Style>('/settings/style', { method: 'PUT', body: JSON.stringify(next) }));
         setStatus('saved');
       } catch (e) {
-        setStatus('error');
-        setError(e instanceof ApiError ? e.code : String(e));
+        setStatus('saved');
+        setSaveError(e instanceof ApiError ? e.code : String(e));
       }
     },
     [style],
   );
 
-  if (status === 'loading') return <p className="muted">Загрузка…</p>;
-  if (status === 'error' && !style)
+  if (loadError)
     return <p className="muted">Не удалось загрузить настройки. Откройте приложение через Telegram.</p>;
+  if (status === 'loading') return <p className="muted">Загрузка…</p>;
 
   return (
     <>
       <h1 className="text-3xl font-bold">Мой стиль</h1>
       {status === 'saving' && <p className="muted">Сохранение…</p>}
-      {status === 'error' && <p className="text-red-600">Ошибка сохранения: {error}</p>}
+      {saveError && <p className="text-red-600">Ошибка сохранения: {saveError}</p>}
       <div className="card mt-5 space-y-4">
         <label className="block">
           Основной стиль:

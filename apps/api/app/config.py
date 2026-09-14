@@ -1,6 +1,7 @@
 from functools import lru_cache
+from typing import Literal
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,11 +13,20 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_bot_username: str = ""
     telegram_webhook_secret: str = "dev-secret"
+    llm_provider: Literal["deepseek", "ollama_cloud"] = "deepseek"
+    llm_api_key: str = ""
+    llm_analysis_model: str = ""
+    llm_reply_model: str = ""
+    llm_summary_model: str = ""
+    llm_timeout_seconds: float | None = Field(default=None, gt=0)
+    llm_max_retries: int | None = Field(default=None, ge=0, le=3)
     openai_api_key: str = ""
     openai_reply_model: str = ""
     openai_analysis_model: str = ""
     openai_summary_model: str = ""
     openai_store: bool = False
+    openai_timeout_seconds: float = Field(default=30, gt=0)
+    openai_max_retries: int = Field(default=1, ge=0, le=3)
     session_secret: str = "development-secret-change-me"
     web_origin: str = "http://localhost:3000"
     cookie_secure: bool = False
@@ -34,6 +44,32 @@ class Settings(BaseSettings):
     enable_memory_extraction: bool = False
     enable_edit_before_send: bool = True
 
+    @property
+    def effective_llm_api_key(self) -> str:
+        return self.llm_api_key or self.openai_api_key
+
+    @property
+    def effective_analysis_model(self) -> str:
+        return self.llm_analysis_model or self.openai_analysis_model
+
+    @property
+    def effective_reply_model(self) -> str:
+        return self.llm_reply_model or self.openai_reply_model
+
+    @property
+    def effective_summary_model(self) -> str:
+        return self.llm_summary_model or self.openai_summary_model
+
+    @property
+    def effective_llm_timeout_seconds(self) -> float:
+        return self.llm_timeout_seconds or self.openai_timeout_seconds
+
+    @property
+    def effective_llm_max_retries(self) -> int:
+        if self.llm_max_retries is not None:
+            return self.llm_max_retries
+        return self.openai_max_retries
+
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
         """Fail fast instead of starting production with development credentials."""
@@ -45,16 +81,24 @@ class Settings(BaseSettings):
             for name in (
                 "telegram_bot_token",
                 "telegram_webhook_secret",
-                "openai_api_key",
-                "openai_reply_model",
-                "openai_analysis_model",
-                "openai_summary_model",
                 "session_secret",
             )
             if not getattr(self, name)
         ]
         if missing:
             raise ValueError(f"production settings are missing: {', '.join(missing)}")
+        missing_llm = [
+            name
+            for name, value in (
+                ("llm_api_key", self.effective_llm_api_key),
+                ("llm_reply_model", self.effective_reply_model),
+                ("llm_analysis_model", self.effective_analysis_model),
+                ("llm_summary_model", self.effective_summary_model),
+            )
+            if not value
+        ]
+        if missing_llm:
+            raise ValueError(f"production settings are missing: {', '.join(missing_llm)}")
         if self.session_secret == "development-secret-change-me":
             raise ValueError("production SESSION_SECRET must not use the development default")
         if self.telegram_webhook_secret == "dev-secret":

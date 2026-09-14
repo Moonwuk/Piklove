@@ -22,7 +22,45 @@ def production_settings(**overrides):
 
 
 def test_development_defaults_remain_available():
-    assert Settings(_env_file=None).environment == "development"
+    settings = Settings(_env_file=None)
+    assert settings.environment == "development"
+    assert settings.llm_provider == "deepseek"
+    assert settings.effective_llm_timeout_seconds == 30
+    assert settings.effective_llm_max_retries == 1
+
+
+def test_llm_settings_take_precedence_over_legacy_openai_settings():
+    settings = Settings(
+        _env_file=None,
+        llm_api_key="new-key",
+        llm_reply_model="new-model",
+        llm_timeout_seconds=12,
+        llm_max_retries=0,
+        openai_api_key="legacy-key",
+        openai_reply_model="legacy-model",
+        openai_timeout_seconds=45,
+        openai_max_retries=3,
+    )
+    assert settings.effective_llm_api_key == "new-key"
+    assert settings.effective_reply_model == "new-model"
+    assert settings.effective_llm_timeout_seconds == 12
+    assert settings.effective_llm_max_retries == 0
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"openai_timeout_seconds": 0},
+        {"openai_max_retries": -1},
+        {"openai_max_retries": 4},
+        {"llm_timeout_seconds": 0},
+        {"llm_max_retries": -1},
+        {"llm_max_retries": 4},
+    ],
+)
+def test_rejects_unbounded_openai_request_configuration(override):
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, **override)
 
 
 @pytest.mark.parametrize(
@@ -32,7 +70,7 @@ def test_development_defaults_remain_available():
         ({"telegram_webhook_secret": "dev-secret"}, "TELEGRAM_WEBHOOK_SECRET"),
         ({"cookie_secure": False}, "COOKIE_SECURE"),
         ({"web_origin": "http://app.example.com"}, "WEB_ORIGIN"),
-        ({"openai_api_key": ""}, "openai_api_key"),
+        ({"openai_api_key": ""}, "llm_api_key"),
     ],
 )
 def test_production_rejects_unsafe_configuration(override, message):

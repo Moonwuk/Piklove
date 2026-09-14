@@ -6,10 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import current_user_id
 from app.config import get_settings
-from app.db.base import StyleProfile, Subscription, User
+from app.db.base import User
 from app.db.session import get_db
 from app.security.session import create_session
 from app.security.telegram_init_data import InitDataError, validate_init_data
+from app.services.users import ensure_user_defaults
 
 router = APIRouter(prefix="/auth")
 
@@ -47,9 +48,8 @@ async def telegram(body: AuthBody, response: Response, db: AsyncSession = Depend
             user = await db.scalar(select(User).where(User.telegram_user_id == tg["id"]))
             if not user:
                 raise HTTPException(500, "AUTH_FAILED") from None
-        else:
-            db.add_all([StyleProfile(user_id=user.id), Subscription(user_id=user.id)])
-            await db.commit()
+    await ensure_user_defaults(db, user.id)
+    await db.commit()
 
     response.set_cookie(
         "session",

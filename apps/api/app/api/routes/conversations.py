@@ -9,9 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import current_user_id
 from app.db.base import *
 from app.db.session import get_db
+from app.integrations.llm import create_llm_provider
+from app.integrations.llm.errors import LLMError
 from app.integrations.telegram.client import TelegramClient
 from app.services.access import AccessService
-from app.services.ai import OpenAIProvider, SuggestionService
+from app.services.ai import SuggestionService
 from app.services.schemas import ReplySuggestions
 
 router = APIRouter(prefix="/conversations")
@@ -103,13 +105,15 @@ async def suggestions(
 ):
     c, _ = await access.require_generation(db, user_id, conversation_id)
     try:
-        g = await SuggestionService(OpenAIProvider()).generate(db, user_id, c)
+        provider = create_llm_provider()
+        try:
+            g = await SuggestionService(provider).generate(db, user_id, c)
+        finally:
+            await provider.aclose()
     except ValueError as e:
         raise HTTPException(409, "NO_CONTEXT_MESSAGES") from e
-    except RuntimeError as e:
-        # Missing/unconfigured provider credentials: the client's fault to fix,
-        # not an internal error. Surface a clear operator-facing message.
-        raise HTTPException(503, "AI_PROVIDER_NOT_CONFIGURED") from e
+    except LLMError as e:
+        raise HTTPException(e.status_code, e.code) from e
     return {
         "generation_id": g.id,
         "analysis": {
