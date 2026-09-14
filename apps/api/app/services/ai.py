@@ -135,7 +135,9 @@ class AIContextBuilder:
                 id=conversation.id, display_name=conversation.display_name or ""
             ),
             summary=conversation.summary,
-            memory=[MemoryItem(category=memory.category, value=memory.value) for memory in memories],
+            memory=[
+                MemoryItem(category=memory.category, value=memory.value) for memory in memories
+            ],
             recent_messages=context_messages,
             new_messages=context_messages[-3:],
         )
