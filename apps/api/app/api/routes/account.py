@@ -31,9 +31,7 @@ async def erase_memory(user_id=Depends(current_user_id), db=Depends(get_db)):
 
 
 @router.delete("/data", status_code=204)
-async def erase(
-    response: Response, user_id=Depends(current_user_id), db=Depends(get_db)
-):
+async def erase(response: Response, user_id=Depends(current_user_id), db=Depends(get_db)):
     await db.execute(delete(User).where(User.id == user_id))
     await db.commit()
     response.delete_cookie("session", path="/")
