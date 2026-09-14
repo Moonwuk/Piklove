@@ -96,31 +96,47 @@ fi
 
 API_BASE=${BASE:-${NEXT_PUBLIC_API_URL%/api/v1}}
 API_BASE=${API_BASE%/}
+WEB_BASE=${WEB_BASE:-${WEB_ORIGIN%/}}
 
 cd "$ROOT"
-echo "1/4 Validating configuration..."
+echo "1/5 Validating configuration..."
 docker compose --env-file "$ENV_FILE" config >/dev/null
 bash -n scripts/*.sh
 
-echo "2/4 Building and starting Piklove..."
+echo "2/5 Building and starting Piklove..."
 docker compose --env-file "$ENV_FILE" up -d --build
 
-echo "3/4 Waiting for the API: $API_BASE"
-ready=0
+echo "3/5 Waiting for the API: $API_BASE"
+api_ready=0
 for _ in $(seq 1 60); do
   if curl --silent --fail --max-time 3 "$API_BASE/health/ready" >/dev/null 2>&1; then
-    ready=1
+    api_ready=1
     break
   fi
   sleep 2
 done
-if [[ "$ready" != "1" ]]; then
+if [[ "$api_ready" != "1" ]]; then
   echo "API did not become ready. Recent logs:" >&2
   docker compose --env-file "$ENV_FILE" logs --tail=120 api >&2
   exit 1
 fi
 
-echo "4/4 Running the product smoke test..."
+echo "4/5 Waiting for the Mini App: $WEB_BASE"
+web_ready=0
+for _ in $(seq 1 60); do
+  if curl --silent --fail --max-time 3 "$WEB_BASE" >/dev/null 2>&1; then
+    web_ready=1
+    break
+  fi
+  sleep 2
+done
+if [[ "$web_ready" != "1" ]]; then
+  echo "Mini App did not become reachable. Recent logs:" >&2
+  docker compose --env-file "$ENV_FILE" logs --tail=120 web >&2
+  exit 1
+fi
+
+echo "5/5 Running the product smoke test..."
 BASE="$API_BASE" \
 SMOKE_LLM="$LIVE_AI" \
 TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
