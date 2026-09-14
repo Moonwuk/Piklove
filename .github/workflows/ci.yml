@@ -69,3 +69,17 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
           NEXT_TELEMETRY_DISABLED: "1"
+
+  deployment-package:
+    runs-on: ubuntu-latest
+    needs: [api, web]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax
+        run: bash -n scripts/*.sh
+      - name: Compose configuration
+        run: |
+          cp .env.example .env
+          docker compose config >/dev/null
+      - name: Build production containers
+        run: docker compose build
