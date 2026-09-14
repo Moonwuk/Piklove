@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,7 +36,15 @@ class SendBody(BaseModel):
 
 class CustomBody(BaseModel):
     generation_id: str
-    text: str = Field(min_length=1, max_length=4096)
+    text: str = Field(max_length=4096)
+
+    @field_validator("text")
+    @classmethod
+    def non_blank_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("text must contain non-whitespace characters")
+        return value
 
 
 def view(c):
@@ -129,7 +137,33 @@ async def suggestions(
     }
 
 
+async def _replay_attempt(
+    db: AsyncSession,
+    user_id: str,
+    idempotency_key: str,
+    conversation_id: str,
+    generation_id: str,
+):
+    existing = await db.scalar(
+        select(SendAttempt).where(
+            SendAttempt.user_id == user_id, SendAttempt.idempotency_key == idempotency_key
+        )
+    )
+    if not existing:
+        return None
+    if existing.conversation_id != conversation_id or existing.generation_id != generation_id:
+        raise HTTPException(409, "IDEMPOTENCY_KEY_REUSED")
+    return {"status": existing.status, "telegram_message_id": existing.telegram_message_id}
+
+
 async def _send(conversation_id, generation_id, text, user_id, db, idempotency_key):
+    # Idempotency must win over mutable checks such as expiry, a newly arrived
+    # message, Copilot being switched off, or Telegram rights changing. A retry
+    # of the same accepted request should replay the recorded outcome.
+    replay = await _replay_attempt(db, user_id, idempotency_key, conversation_id, generation_id)
+    if replay:
+        return replay
+
     c, bc, g = await access.send(db, user_id, conversation_id, generation_id)
     now = datetime.now(timezone.utc)
     if g.expires_at.replace(tzinfo=timezone.utc) <= now:
@@ -147,24 +181,20 @@ async def _send(conversation_id, generation_id, text, user_id, db, idempotency_k
     if newer:
         raise HTTPException(409, "SUGGESTION_STALE")
 
-    existing = await db.scalar(
-        select(SendAttempt).where(
-            SendAttempt.user_id == user_id, SendAttempt.idempotency_key == idempotency_key
-        )
-    )
-    if existing:
-        return {"status": existing.status, "telegram_message_id": existing.telegram_message_id}
-
     # Atomic reservation: only one concurrent request can flip sent_at from
     # NULL. Two different idempotency keys racing the same generation can no
-    # longer both reach the Telegram API (the pre-check on g.sent_at alone was
-    # a check-then-act race producing duplicate sends to a real person).
+    # longer both reach the Telegram API.
     claimed = await db.execute(
         update(Generation)
         .where(Generation.id == g.id, Generation.sent_at.is_(None))
         .values(sent_at=now)
     )
     if claimed.rowcount == 0:
+        # A concurrent retry with the same key may have created the attempt
+        # while this transaction was waiting for the generation row.
+        replay = await _replay_attempt(db, user_id, idempotency_key, conversation_id, generation_id)
+        if replay:
+            return replay
         raise HTTPException(409, "GENERATION_ALREADY_SENT")
 
     try:
@@ -180,13 +210,9 @@ async def _send(conversation_id, generation_id, text, user_id, db, idempotency_k
     except IntegrityError:
         # A concurrent retry with the same Idempotency-Key won the insert.
         await db.rollback()
-        attempt = await db.scalar(
-            select(SendAttempt).where(
-                SendAttempt.user_id == user_id, SendAttempt.idempotency_key == idempotency_key
-            )
-        )
-        if attempt:
-            return {"status": attempt.status, "telegram_message_id": attempt.telegram_message_id}
+        replay = await _replay_attempt(db, user_id, idempotency_key, conversation_id, generation_id)
+        if replay:
+            return replay
         raise HTTPException(409, "SEND_CONFLICT") from None
 
     try:
@@ -224,10 +250,15 @@ async def _send(conversation_id, generation_id, text, user_id, db, idempotency_k
 async def send(
     conversation_id: str,
     body: SendBody,
-    idempotency_key: str = Header(..., alias="Idempotency-Key", max_length=100),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=1, max_length=100),
     user_id=Depends(current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
+    replay = await _replay_attempt(
+        db, user_id, idempotency_key, conversation_id, body.generation_id
+    )
+    if replay:
+        return replay
     _, _, g = await access.send(db, user_id, conversation_id, body.generation_id)
     options = ReplySuggestions.model_validate(g.suggestions_json).options
     option = next((x for x in options if x.id == body.option_id), None)
@@ -240,13 +271,11 @@ async def send(
 async def custom(
     conversation_id: str,
     body: CustomBody,
-    idempotency_key: str = Header(..., alias="Idempotency-Key", max_length=100),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=1, max_length=100),
     user_id=Depends(current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    return await _send(
-        conversation_id, body.generation_id, body.text.strip(), user_id, db, idempotency_key
-    )
+    return await _send(conversation_id, body.generation_id, body.text, user_id, db, idempotency_key)
 
 
 @router.delete("/{conversation_id}/memory", status_code=204)

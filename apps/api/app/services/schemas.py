@@ -1,10 +1,12 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ConversationAnalysis(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     stage: Literal["opening", "rapport", "flirting", "meeting_discussion", "inactive", "boundary"]
     engagement: Literal["low", "medium", "high", "unknown"]
     tone: Literal["neutral", "warm", "playful", "flirty", "serious", "negative"]
@@ -25,20 +27,32 @@ class ConversationAnalysis(BaseModel):
 
 
 class ReplyOption(BaseModel):
-    id: str
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=64)
     tone: Literal["natural", "playful", "direct"]
     text: str = Field(min_length=1, max_length=4096)
 
+    @field_validator("id", "text")
+    @classmethod
+    def trim_non_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("value must contain non-whitespace characters")
+        return value
+
 
 class ReplySuggestions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     options: list[ReplyOption]
 
     @field_validator("options")
     @classmethod
-    def exactly_three(cls, v):
-        if len(v) != 3 or len({x.id for x in v}) != 3:
+    def exactly_three(cls, value):
+        if len(value) != 3 or len({item.id for item in value}) != 3:
             raise ValueError("exactly three unique options required")
-        return v
+        return value
 
 
 class UserStyleContext(BaseModel):
