@@ -1,21 +1,30 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+
+import { useCallback, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
+
+type MessageState = { kind: 'success' | 'error'; text: string } | null;
 
 export default function Privacy() {
   const [busy, setBusy] = useState('');
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState<MessageState>(null);
+  const [deleted, setDeleted] = useState(false);
 
   const eraseMemory = useCallback(async () => {
     if (!confirm('Очистить AI-память во всех диалогах? Отменить это нельзя.')) return;
     setBusy('memory');
-    setMessage('');
+    setMessage(null);
     try {
-      const list = await api<{ id: string; display_name: string | null }[]>('/conversations');
-      await Promise.all(list.map((c) => api(`/conversations/${c.id}/memory`, { method: 'DELETE' })));
-      setMessage('AI-память очищена.');
-    } catch (e) {
-      setMessage(e instanceof ApiError ? `Ошибка: ${e.code}` : 'Не удалось очистить память.');
+      await api('/account/memory', { method: 'DELETE' });
+      setMessage({ kind: 'success', text: 'AI-память и старые генерации очищены.' });
+    } catch (error) {
+      setMessage({
+        kind: 'error',
+        text:
+          error instanceof ApiError
+            ? `Ошибка: ${error.code}`
+            : 'Не удалось очистить AI-память.',
+      });
     } finally {
       setBusy('');
     }
@@ -24,12 +33,20 @@ export default function Privacy() {
   const eraseAccount = useCallback(async () => {
     if (!confirm('Удалить мой аккаунт и все данные безвозвратно? Отменить это нельзя.')) return;
     setBusy('account');
-    setMessage('');
+    setMessage(null);
     try {
       await api('/account/data', { method: 'DELETE' });
-      setMessage('Данные удалены. Перезагрузите приложение — сессия будет недействительна.');
-    } catch (e) {
-      setMessage(e instanceof ApiError ? `Ошибка: ${e.code}` : 'Не удалось удалить данные.');
+      setDeleted(true);
+      setMessage({
+        kind: 'success',
+        text: 'Данные удалены, сессия завершена. Повторное открытие создаст новый пустой аккаунт.',
+      });
+    } catch (error) {
+      setMessage({
+        kind: 'error',
+        text:
+          error instanceof ApiError ? `Ошибка: ${error.code}` : 'Не удалось удалить данные.',
+      });
     } finally {
       setBusy('');
     }
@@ -37,28 +54,30 @@ export default function Privacy() {
 
   return (
     <>
-      <h1 className="text-3xl font-bold">Privacy</h1>
+      <h1 className="text-3xl font-bold">Приватность</h1>
       <div className="card mt-5">
         <p>
-          AI обрабатывает только чаты, доступные нашему Business Bot и включённые вами для Copilot.
-          Пока Copilot выключен, текст сообщений не сохраняется вовсе. Текст хранится максимум 30
-          дней, потом удаляется автоматически.
+          AI обрабатывает только чаты, доступные Business Bot и включённые вами для Copilot. Пока
+          Copilot выключен, текст новых сообщений не сохраняется. Сохранённый текст удаляется после
+          настроенного срока хранения.
         </p>
-        {message && <p className="mt-3 text-green-700">{message}</p>}
-        <button
-          className="button mt-5 disabled:opacity-50"
-          disabled={busy !== ''}
-          onClick={eraseMemory}
-        >
-          {busy === 'memory' ? 'Очищаю…' : 'Очистить AI-память'}
-        </button>
-        <button
-          className="mt-3 w-full rounded-xl border border-red-300 p-3 text-red-600 disabled:opacity-50"
-          disabled={busy !== ''}
-          onClick={eraseAccount}
-        >
-          {busy === 'account' ? 'Удаляю…' : 'Удалить мои данные'}
-        </button>
+
+        {message && (
+          <p className={`mt-3 ${message.kind === 'error' ? 'text-red-600' : 'text-green-700'}`}>
+            {message.text}
+          </p>
+        )}
+
+        {!deleted && (
+          <>
+            <button className="button mt-5 disabled:opacity-50" disabled={busy !== ''} onClick={eraseMemory}>
+              {busy === 'memory' ? 'Очищаю…' : 'Очистить AI-память'}
+            </button>
+            <button className="mt-3 w-full rounded-xl border border-red-300 p-3 text-red-600 disabled:opacity-50" disabled={busy !== ''} onClick={eraseAccount}>
+              {busy === 'account' ? 'Удаляю…' : 'Удалить мои данные'}
+            </button>
+          </>
+        )}
       </div>
     </>
   );
