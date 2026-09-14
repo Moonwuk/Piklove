@@ -48,13 +48,9 @@ class OpenAIProvider:
 
     def __init__(self):
         self.settings = get_settings()
-        missing = [
-            name for name in self.required_settings if not getattr(self.settings, name)
-        ]
+        missing = [name for name in self.required_settings if not getattr(self.settings, name)]
         if missing:
-            raise AIProviderNotConfigured(
-                f"missing OpenAI configuration: {', '.join(missing)}"
-            )
+            raise AIProviderNotConfigured(f"missing OpenAI configuration: {', '.join(missing)}")
         self.client = AsyncOpenAI(
             api_key=self.settings.openai_api_key,
             timeout=self.settings.openai_timeout_seconds,
@@ -73,9 +69,7 @@ class OpenAIProvider:
                 text_format=schema,
             )
         except ValidationError as error:
-            raise AIProviderUnavailable(
-                "provider returned malformed structured output"
-            ) from error
+            raise AIProviderUnavailable("provider returned malformed structured output") from error
         except OpenAIError as error:
             raise AIProviderUnavailable(type(error).__name__) from error
         if response.output_parsed is None:
@@ -100,9 +94,7 @@ class OpenAIProvider:
 
 
 class AIContextBuilder:
-    async def build(
-        self, db: AsyncSession, user_id: str, conversation
-    ) -> AIConversationContext:
+    async def build(self, db: AsyncSession, user_id: str, conversation) -> AIConversationContext:
         settings = get_settings()
         style = await db.get(StyleProfile, user_id)
         memories = (
@@ -143,10 +135,7 @@ class AIContextBuilder:
                 id=conversation.id, display_name=conversation.display_name or ""
             ),
             summary=conversation.summary,
-            memory=[
-                MemoryItem(category=memory.category, value=memory.value)
-                for memory in memories
-            ],
+            memory=[MemoryItem(category=memory.category, value=memory.value) for memory in memories],
             recent_messages=context_messages,
             new_messages=context_messages[-3:],
         )
