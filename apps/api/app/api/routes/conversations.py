@@ -275,9 +275,7 @@ async def custom(
     user_id=Depends(current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    return await _send(
-        conversation_id, body.generation_id, body.text, user_id, db, idempotency_key
-    )
+    return await _send(conversation_id, body.generation_id, body.text, user_id, db, idempotency_key)
 
 
 @router.delete("/{conversation_id}/memory", status_code=204)
